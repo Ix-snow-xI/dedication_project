@@ -1,7 +1,9 @@
 """Dedication bot: goals -> habits -> daily checklist + evening reminder."""
 import asyncio
+import json
 import logging
 import os
+import shutil
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -29,7 +31,9 @@ def load_env(path):
 
 load_env(ROOT / ".env")
 TOKEN = os.environ["BOT_TOKEN"]
-USER_IDS = {int(x) for x in (os.environ.get("USER_IDS") or os.environ["OWNER_ID"]).split(",") if x.strip()}
+USERS = [int(x) for x in (os.environ.get("USER_IDS") or os.environ["OWNER_ID"]).split(",") if x.strip()]
+ADMIN_ID = USERS[0]
+USER_IDS = set(USERS)
 TZ = ZoneInfo(os.environ.get("BOT_TZ", "Asia/Baku"))
 REMIND_AT = time.fromisoformat(os.environ.get("REMIND_AT", "21:00"))
 
@@ -230,14 +234,47 @@ async def reminder(bot: Bot):
         target = next_remind(datetime.now(TZ))
 
 
+def low_battery_alert(info: dict, alerted: bool):
+    pct = info["percentage"]
+    unplugged = info.get("plugged") == "UNPLUGGED"
+    if unplugged and pct <= 15:
+        return not alerted, True
+    if not unplugged or pct >= 20:
+        return False, False
+    return False, alerted
+
+
+async def battery_watch(bot: Bot):
+    if not shutil.which("termux-battery-status"):
+        return
+    alerted = False
+    while True:
+        try:
+            proc = await asyncio.create_subprocess_exec("termux-battery-status", stdout=asyncio.subprocess.PIPE)
+            try:
+                out, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+                raise
+            info = json.loads(out)
+            should_alert, alerted = low_battery_alert(info, alerted)
+            if should_alert:
+                await bot.send_message(ADMIN_ID, f"🪫 Заряд сервера: {info['percentage']}%")
+        except Exception:
+            logging.exception("Battery check failed")
+        await asyncio.sleep(300)
+
+
 async def main():
     logging.basicConfig(level=logging.INFO)
     bot = Bot(TOKEN)
-    remind_task = asyncio.create_task(reminder(bot))  # keep a reference so it isn't garbage-collected
+    tasks = [asyncio.create_task(reminder(bot)), asyncio.create_task(battery_watch(bot))]
     try:
         await dp.start_polling(bot)
     finally:
-        remind_task.cancel()
+        for t in tasks:
+            t.cancel()
 
 
 if __name__ == "__main__":

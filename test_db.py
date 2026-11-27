@@ -129,6 +129,15 @@ class BotTest(unittest.IsolatedAsyncioTestCase):
         await self.click(f"t:{hid}:{d}", user=OWNER)
         self.tg.send_message.assert_not_awaited()
 
+    def test_low_battery_alert(self):
+        # Alerts once at <=15% unplugged, does not repeat, resets on plug or >=20%
+        self.assertEqual(bot.low_battery_alert({"percentage": 16, "plugged": "UNPLUGGED"}, False), (False, False))
+        self.assertEqual(bot.low_battery_alert({"percentage": 15, "plugged": "UNPLUGGED"}, False), (True, True))
+        self.assertEqual(bot.low_battery_alert({"percentage": 14, "plugged": "UNPLUGGED"}, True), (False, True))
+        self.assertEqual(bot.low_battery_alert({"percentage": 18, "plugged": "UNPLUGGED"}, True), (False, True))
+        self.assertEqual(bot.low_battery_alert({"percentage": 15, "plugged": "PLUGGED_AC"}, True), (False, False))
+        self.assertEqual(bot.low_battery_alert({"percentage": 20, "plugged": "UNPLUGGED"}, True), (False, False))
+
 
 if __name__ == "__main__":
     unittest.main()
