@@ -1,3 +1,4 @@
+
 # Dedication Bot
 
 Личный Telegram-бот для дисциплины: цели → привычки → ежедневная отметка + вечернее напоминание.
@@ -6,9 +7,8 @@
 ## 1. Подготовка
 
 1. Создай бота у [@BotFather](https://t.me/BotFather) → получи токен.
-2. Узнайте свои user id у [@userinfobot](https://t.me/userinfobot) и укажите через запятую в `USER_IDS`.
+2. Узнай свой user id у [@userinfobot](https://t.me/userinfobot).
 3. Скопируй `.env.example` в `.env` и заполни.
-4. Оба пользователя должны нажать `/start` в личке с ботом, чтобы Telegram разрешил ему слать уведомления и напоминания.
 
 ## 2. Установка uv
 
