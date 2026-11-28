@@ -1,0 +1,112 @@
+name: Telegram Push Notify
+
+on:
+  push:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send commit messages to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 - <<'PY'
+          import html
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.request
+
+          token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+          if not token or not chat_id:
+              sys.exit("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID")
+
+          event_path = os.environ.get("GITHUB_EVENT_PATH", "")
+          if not event_path or not os.path.exists(event_path):
+              sys.exit("Missing GITHUB_EVENT_PATH")
+
+          with open(event_path, encoding="utf-8") as f:
+              event = json.load(f)
+
+          commits = event.get("commits") or []
+          if not commits:
+              print("No commits in push event; skipping notification.")
+              sys.exit(0)
+
+          repo = html.escape((event.get("repository") or {}).get("full_name") or "unknown")
+          ref = event.get("ref") or ""
+          for prefix in ("refs/heads/", "refs/tags/"):
+              if ref.startswith(prefix):
+                  ref = ref[len(prefix):]
+                  break
+          branch = html.escape(ref or "unknown")
+          pusher = html.escape((event.get("pusher") or {}).get("name") or "unknown")
+          compare = event.get("compare") or ""
+
+          header_lines = [
+              f"📦 <b>{repo}</b> (<code>{branch}</code>)",
+              f"👤 {pusher} • {len(commits)} commit(s)",
+          ]
+          if compare:
+              header_lines.append(f'<a href="{html.escape(compare, quote=True)}">View diff</a>')
+          header = "\n".join(header_lines)
+
+          def format_commits(max_msg_len=None, budget=None):
+              lines = []
+              used = 0
+              for c in commits:
+                  sha = html.escape((c.get("id") or "")[:7])
+                  url = c.get("url") or ""
+                  sha_html = (
+                      f'<a href="{html.escape(url, quote=True)}"><code>{sha}</code></a>'
+                      if url
+                      else f"<code>{sha}</code>"
+                  )
+                  raw_msg = (c.get("message") or "").strip()
+                  if max_msg_len is not None and len(raw_msg) > max_msg_len:
+                      raw_msg = raw_msg[: max_msg_len - 1] + "…"
+                  entry = f"• {sha_html} {html.escape(raw_msg)}"
+                  if budget is not None:
+                      sep = 1 if lines else 0
+                      if used + sep + len(entry) > budget:
+                          lines.append("…")
+                          break
+                      used += sep + len(entry)
+                  lines.append(entry)
+              return "\n".join(lines)
+
+          text = f"{header}\n\n{format_commits()}"
+          if len(text) > 4096:
+              budget = max(0, 4096 - len(header) - 10)
+              text = f"{header}\n\n{format_commits(max_msg_len=300, budget=budget)}"
+
+          payload = json.dumps(
+              {
+                  "chat_id": chat_id,
+                  "text": text,
+                  "parse_mode": "HTML",
+                  "disable_web_page_preview": True,
+              }
+          ).encode("utf-8")
+
+          req = urllib.request.Request(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              data=payload,
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+
+          try:
+              with urllib.request.urlopen(req, timeout=15) as resp:
+                  body = resp.read().decode("utf-8", errors="replace")
+                  print(f"Telegram API {resp.status}: {body}")
+          except urllib.error.HTTPError as e:
+              err_body = e.read().decode("utf-8", errors="replace")
+              sys.exit(f"Telegram API HTTP {e.code}: {err_body}")
+          except urllib.error.URLError as e:
+              sys.exit(f"Telegram API request failed: {e.reason}")
+          PY
